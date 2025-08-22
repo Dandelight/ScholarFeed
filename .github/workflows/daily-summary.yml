@@ -1,0 +1,187 @@
+name: 每日论文总结
+
+on:
+  schedule:
+    # 每天北京时间上午9:00 (UTC 1:00) 执行
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+    # 允许手动触发
+    inputs:
+      date:
+        description: '指定日期 (YYYY-MM-DD)，留空则使用今日'
+        required: false
+        type: string
+      category:
+        description: 'arXiv分类'
+        required: false
+        default: 'cs.AI'
+        type: choice
+        options:
+          - cs.AI
+          - cs.CL
+          - cs.LG
+          - cs.CV
+
+jobs:
+  summarize:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
+
+    - name: 设置Go环境
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.23'
+
+    - name: 安装依赖
+      run: go mod tidy
+
+    - name: 设置MySQL数据库
+      run: |
+        sudo systemctl start mysql.service
+        mysql -e "CREATE DATABASE IF NOT EXISTS arxiv_db;" -uroot -proot
+        mysql -e "CREATE USER IF NOT EXISTS 'arxiv'@'localhost' IDENTIFIED BY 'arxiv123';" -uroot -proot
+        mysql -e "GRANT ALL PRIVILEGES ON arxiv_db.* TO 'arxiv'@'localhost';" -uroot -proot
+        mysql -e "FLUSH PRIVILEGES;" -uroot -proot
+
+    - name: 创建环境配置文件
+      run: |
+        cat > .env << EOF
+        # 数据库配置
+        DB_HOST=localhost
+        DB_PORT=3306
+        DB_USER=arxiv
+        DB_PASSWORD=arxiv123
+        DB_NAME=arxiv_db
+        
+        # AI配置
+        AI_PROVIDER=claude
+        ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+        ANTHROPIC_MODEL=claude-sonnet-4-20250514
+        ANTHROPIC_BASE_URL=https://api.openai-proxy.org/anthropic
+        
+        # arXiv配置
+        ARXIV_CATEGORY=cs.AI
+        ARXIV_MAX_RESULTS=100
+        ARXIV_DELAY_SECONDS=3.0
+        ARXIV_NUM_RETRIES=3
+        
+        # 服务器配置
+        PORT=8080
+        GIN_MODE=release
+        EOF
+
+    - name: 构建应用
+      run: go build -o arxiv-server cmd/server/main.go
+
+    - name: 启动服务器 (后台)
+      run: |
+        ./arxiv-server &
+        SERVER_PID=$!
+        echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
+        sleep 10  # 等待服务器启动
+
+    - name: 健康检查
+      run: |
+        curl -f http://localhost:8080/health || (echo "健康检查失败" && exit 1)
+
+    - name: 执行论文总结
+      run: |
+        # 设置日期
+        if [ -n "${{ github.event.inputs.date }}" ]; then
+          TARGET_DATE="${{ github.event.inputs.date }}"
+        else
+          # 使用昨天的日期，因为论文通常在UTC时间发布
+          TARGET_DATE=$(date -d "yesterday" +%Y-%m-%d)
+        fi
+        
+        # 设置分类
+        CATEGORY="${{ github.event.inputs.category || 'cs.AI' }}"
+        
+        echo "开始总结 $TARGET_DATE 的 $CATEGORY 分类论文..."
+        
+        # 调用API
+        RESPONSE=$(curl -s -X POST \
+          -H "Content-Type: application/json" \
+          -d "{\"date\":\"$TARGET_DATE\",\"category\":\"$CATEGORY\"}" \
+          http://localhost:8080/api/summarize)
+        
+        echo "API响应: $RESPONSE"
+        
+        # 检查API调用是否成功
+        if echo "$RESPONSE" | grep -q '"success":true'; then
+          echo "✅ 论文总结成功完成"
+        else
+          echo "❌ 论文总结失败"
+          echo "响应内容: $RESPONSE"
+          exit 1
+        fi
+        
+        echo "论文总结完成"
+
+    - name: 停止服务器
+      if: always()
+      run: |
+        if [ -n "$SERVER_PID" ]; then
+          kill $SERVER_PID || true
+        fi
+
+    - name: 检查生成的文件
+      run: |
+        echo "检查生成的报告文件..."
+        ls -la reports/ || echo "报告目录不存在"
+        ls -la README.md || echo "README.md不存在"
+
+    - name: 配置Git
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+
+    - name: 提交更改
+      run: |
+        git add .
+        if git diff --staged --quiet; then
+          echo "没有新的更改需要提交"
+        else
+          git commit -m "📊 自动更新每日论文总结 $(date +%Y-%m-%d)"
+          git push
+          echo "成功提交并推送更改"
+        fi
+
+    - name: 创建总结完成的Issue (如有错误)
+      if: failure()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const title = `每日论文总结失败 - ${new Date().toISOString().split('T')[0]}`;
+          const body = `
+          ## 每日论文总结执行失败
+          
+          **执行时间**: ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}
+          **工作流**: ${{ github.workflow }}
+          **运行ID**: ${{ github.run_id }}
+          
+          请检查工作流日志以了解失败原因。
+          
+          [查看运行详情](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          `;
+          
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: title,
+            body: body,
+            labels: ['bug', 'automated']
+          });
+
+    - name: 发送成功通知 (可选)
+      if: success()
+      run: |
+        echo "✅ 每日论文总结执行成功！"
+        echo "📊 报告已更新到 reports/ 目录"
+        echo "📝 README.md 已自动更新"
