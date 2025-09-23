@@ -9,6 +9,7 @@ import json
 import os
 import re
 from abc import ABC, abstractmethod
+from argparse import ArgumentParser
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -410,7 +411,7 @@ def main():
     }
 
     # 选择要使用的模型 - 修改这里来切换模型
-    provider = ModelProvider.CLAUDE  # 改为OPENAI或CUSTOM_OPENAI
+    provider = ModelProvider.CLAUDE
     if provider == ModelProvider.CLAUDE:
         config = model_config_claude
     elif provider == ModelProvider.OPENAI:
@@ -418,16 +419,18 @@ def main():
     else:
         config = model_config_custom
 
-    category = "cs.AI"
-    # 初始化总结器
-    for day in range(1, 31):
-        target_date = f"2025-04-{day:02d}"
-        papers = get_summary_by_date_and_category(
-            target_date, category, provider, config
-        )
+    parser = ArgumentParser()
+    parser.add_argument("target_date", type=str)
+    parser.add_argument("--category", type=str, default="cs.AI")
+    parser.add_argument("--tee", action="store_true")
+    args = parser.parse_args()
 
-        logger.info(f"{target_date} 共处理 {len(papers)} 篇论文")
+    summary = get_summary_by_date_and_category(
+        args.target_date, args.category, provider, config
+    )
 
+    if args.tee:
+        logger.info(f"{args.target_date}\n\n{summary}")
 
 def get_summary_by_date_and_category(target_date, category, provider, config):
     summarizer = ArxivPaperSummarizer(provider=provider, model_config=config)
@@ -451,7 +454,8 @@ def get_summary_by_date_and_category(target_date, category, provider, config):
     logger.info(f"生成每日报告到 {file_version}")
     with open(file_version, "w", encoding="utf-8") as f:
         f.write(summarized_papers)
-    return papers
+
+    return summarized_papers
 
 
 def find_correct_version(filename: str) -> str:
