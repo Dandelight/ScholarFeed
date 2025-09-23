@@ -393,6 +393,7 @@ class ArxivPaperSummarizer:
 
 def main():
     """主函数 - 演示不同模型的使用"""
+    os.makedirs("reports", exist_ok=True)
 
     model_config_claude = {
         "api_key": os.getenv("ANTHROPIC_API_KEY"),
@@ -443,14 +444,14 @@ def get_summary_by_date_and_category(target_date, category, provider, config):
         return
 
     # 保存一下
-    with open(f"arxiv_papers_{target_date}.json", "w", encoding="utf-8") as f:
+    with open(f"reports/arxiv_papers_{target_date}.json", "w", encoding="utf-8") as f:
         json.dump(papers, f, ensure_ascii=False, indent=2)
 
     # 总结论文
     logger.info(f"开始使用{provider.value}总结论文...")
     summarized_papers = summarizer.summarize_all_papers(papers)
 
-    file_version = find_correct_version(f"daily_report_{target_date}")
+    file_version = find_correct_version(f"reports/daily_report_{target_date}")
     logger.info(f"生成每日报告到 {file_version}")
     with open(file_version, "w", encoding="utf-8") as f:
         f.write(summarized_papers)

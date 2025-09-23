@@ -8,9 +8,6 @@ env:
   ANTHROPIC_BASE_URL: https://api.openai-proxy.org/anthropic
 
 on:
-  push:
-    branches:
-      - main
   schedule:
     # 每天北京时间上午9:00 (UTC 1:00) 执行
     - cron: '0 1 * * *'
@@ -65,6 +62,10 @@ jobs:
         CATEGORY="${{ github.event.inputs.category || 'cs.AI' }}"
 
         uv run main.py $TARGET_DATE --category $CATEGORY --tee
+
+        # 更新 README
+        rm README.md
+        cp reports/daily_report_${TARGET_DATE}.md README.md
 
     - name: 配置Git
       run: |
