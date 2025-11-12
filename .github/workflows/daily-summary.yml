@@ -9,8 +9,8 @@ env:
 
 on:
   schedule:
-    # 每天北京时间上午9:00 (UTC 1:00) 执行
-    - cron: '0 1 * * *'
+    # 设置一个比较冷门的时间
+    - cron: '21 22 * * *'
   workflow_dispatch:
     # 允许手动触发
     inputs:
@@ -54,8 +54,8 @@ jobs:
         if [ -n "${{ github.event.inputs.date }}" ]; then
           TARGET_DATE="${{ github.event.inputs.date }}"
         else
-          # 使用昨天的日期，因为论文通常在UTC时间发布
-          TARGET_DATE=$(date -d "yesterday" +%Y-%m-%d)
+          # 使用昨天的日期，因为论文通常在UTC时间发布，且 arXiv 的 export 端口有延迟
+          TARGET_DATE=$(date -d "2 days ago" +%Y-%m-%d)
         fi
 
         # 设置分类
